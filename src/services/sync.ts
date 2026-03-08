@@ -9,7 +9,7 @@ function getCursorKey(openKfId: string): string {
 }
 
 function shouldAutoReply(input: { msgType: string; origin: number | null; externalUserId: string | null }): boolean {
-  return input.msgType !== "event" && input.origin === 3 && Boolean(input.externalUserId);
+  return input.msgType !== "event" && Boolean(input.externalUserId);
 }
 
 function buildReplyContent(entry: ArchivedEntry): string {
@@ -67,7 +67,17 @@ export async function runSync(input: {
         }
 
         archivedMessages += 1;
-        if (!autoReply || !shouldAutoReply(message)) {
+        const shouldReply = autoReply && shouldAutoReply(message);
+        console.info("WeCom sync archived message", {
+          openKfId: message.openKfId,
+          msgId: message.msgId,
+          msgType: message.msgType,
+          origin: message.origin,
+          externalUserId: message.externalUserId,
+          shouldReply
+        });
+
+        if (!shouldReply) {
           continue;
         }
 
@@ -75,13 +85,22 @@ export async function runSync(input: {
           await wecomService.sendTextMessage({
             externalUserId: message.externalUserId!,
             openKfId: message.openKfId,
+            msgId: message.msgId,
             content: buildReplyContent(archivedEntry)
+          });
+          console.info("WeCom auto reply sent", {
+            openKfId: message.openKfId,
+            msgId: message.msgId,
+            externalUserId: message.externalUserId
           });
           autoReplies += 1;
         } catch (error) {
           console.warn("WeCom auto reply failed", {
             openKfId: message.openKfId,
             msgId: message.msgId,
+            msgType: message.msgType,
+            origin: message.origin,
+            externalUserId: message.externalUserId,
             error: error instanceof Error ? error.message : String(error)
           });
         }
