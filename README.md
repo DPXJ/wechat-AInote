@@ -37,6 +37,9 @@ This route is intended to support a Cubox-style workflow where the assistant is 
 Required `.env` values:
 
 - `WECOM_ARCHIVE_IMPORT_TOKEN`
+- `WECOM_ARCHIVE_INBOX_DIR`
+- `WECOM_ARCHIVE_PROCESSED_DIR`
+- `WECOM_ARCHIVE_FAILED_DIR`
 
 Internal import endpoint:
 
@@ -87,11 +90,60 @@ Optional inline attachment payload:
 }
 ```
 
+Optional local-file attachment payload:
+
+```json
+{
+  "messages": [
+    {
+      "msgid": "archive-msg-003",
+      "msgtime": 1773036443,
+      "msgtype": "file",
+      "external_userid": "external-user-001",
+      "attachment": {
+        "fileName": "brand-book.pdf",
+        "mimeType": "application/pdf",
+        "filePath": "./attachments/brand-book.pdf"
+      },
+      "file": {
+        "filename": "brand-book.pdf",
+        "sdkfileid": "sdkfileid-456"
+      }
+    }
+  ],
+  "attachmentsRoot": "./"
+}
+```
+
 Behavior:
 
 - Archives decrypted chat-archive messages into the same SQLite knowledge base.
 - Stores inline attachment binaries under local storage when provided.
+- Supports attachment files referenced by local path, which is useful when an external chat-archive SDK writes JSON plus binaries to disk.
 - Falls back to metadata-only import when only `sdkfileid` is available, and marks the entry as a warning so a later downloader can fetch the binary.
+
+### Contact archive inbox worker
+
+If an external exporter or SDK drops decrypted chat-archive payloads into a local directory, run:
+
+```bash
+npm run archive:inbox
+```
+
+The worker:
+
+- Reads every `.json` file under `WECOM_ARCHIVE_INBOX_DIR`
+- Imports messages into the same archive pipeline
+- Moves successfully imported payload files to `WECOM_ARCHIVE_PROCESSED_DIR`
+- Moves failed payload files to `WECOM_ARCHIVE_FAILED_DIR`
+
+Accepted JSON formats:
+
+- A plain array of messages
+- An object with `{ "messages": [...] }`
+- An object with `{ "messages": [...], "attachmentsRoot": "./attachments" }`
+
+This lets the current backend stay stable while the official WeCom chat-archive retriever is built or integrated later.
 
 ## WeCom callback setup
 The callback route remains available for the legacy customer-service-based flow.
@@ -100,6 +152,7 @@ The callback route remains available for the legacy customer-service-based flow.
 
 - Supports WeCom Customer Service callback URL verification and realtime message sync
 - Supports internal import of WeCom contact/chat-archive messages
+- Supports batch import from a local contact-archive inbox directory
 - Stores data in SQLite and files on local disk
 - Extracts text from `txt`, `md`, `pdf`, `docx`, `xlsx`, `csv`, `pptx`
 - Generates AI title, summary, keywords, tags, and todo candidates

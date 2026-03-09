@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { archiveService } from "./archive.js";
 import { buildAssetSummaryText, extractTextFromAsset } from "./parser.js";
 import { storageService } from "./storage.js";
@@ -29,6 +30,7 @@ interface InlineAttachmentPayload {
   fileName?: string;
   mimeType?: string | null;
   base64?: string;
+  filePath?: string;
   kind?: string;
   metadata?: JsonValue;
 }
@@ -63,6 +65,18 @@ function asJsonObject(input: JsonValue | undefined): Record<string, JsonValue> {
     return input as Record<string, JsonValue>;
   }
   return {};
+}
+
+async function loadInlineAttachmentBuffer(payload: InlineAttachmentPayload): Promise<Buffer | null> {
+  if (payload.base64) {
+    return Buffer.from(payload.base64, "base64");
+  }
+
+  if (payload.filePath) {
+    return fs.readFile(payload.filePath);
+  }
+
+  return null;
 }
 
 function normalizeArchiveMessageType(msgType: string): MessageType {
@@ -195,10 +209,13 @@ export class WecomContactArchiveService {
       let entryStatus: ArchiveEntryRecord["status"] = "ready";
       let asset: Parameters<typeof archiveService.ingestCanonicalRecord>[0]["asset"] = null;
 
-      if (message.attachment?.base64) {
+      if (message.attachment) {
         try {
           const fileName = message.attachment.fileName ?? getAttachmentMetadata(message)?.fileName ?? `${msgType}-${message.msgid}.bin`;
-          const buffer = Buffer.from(message.attachment.base64, "base64");
+          const buffer = await loadInlineAttachmentBuffer(message.attachment);
+          if (!buffer) {
+            throw new Error("Attachment payload must provide base64 or filePath.");
+          }
           const saved = await storageService.saveBuffer(fileName, buffer, "contact-archive");
           const parsed = await extractTextFromAsset(saved.storagePath, saved.mimeType);
           const extractedText = buildAssetSummaryText(saved.fileName, parsed);
@@ -218,7 +235,8 @@ export class WecomContactArchiveService {
             metadata: {
               ...asJsonObject(message.attachment.metadata),
               importedFrom: "wecom-contact-archive",
-              msgtype: msgType
+              msgtype: msgType,
+              filePath: message.attachment.filePath ?? null
             }
           };
           importedAssets += 1;

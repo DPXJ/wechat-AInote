@@ -18,7 +18,10 @@ const schema = z.object({
   WECOM_SYNC_PAGE_SIZE: z.coerce.number().default(100),
   WECOM_CALLBACK_TOKEN: z.string().optional(),
   WECOM_CALLBACK_AES_KEY: z.string().optional(),
-  WECOM_ARCHIVE_IMPORT_TOKEN: z.string().optional()
+  WECOM_ARCHIVE_IMPORT_TOKEN: z.string().optional(),
+  WECOM_ARCHIVE_INBOX_DIR: z.string().default("./data/wecom-contact-archive/inbox"),
+  WECOM_ARCHIVE_PROCESSED_DIR: z.string().default("./data/wecom-contact-archive/processed"),
+  WECOM_ARCHIVE_FAILED_DIR: z.string().default("./data/wecom-contact-archive/failed")
 });
 
 const parsed = schema.parse(process.env);
@@ -37,5 +40,8 @@ export const appConfig = {
   wecomSyncPageSize: parsed.WECOM_SYNC_PAGE_SIZE,
   wecomCallbackToken: parsed.WECOM_CALLBACK_TOKEN,
   wecomCallbackAesKey: parsed.WECOM_CALLBACK_AES_KEY,
-  wecomArchiveImportToken: parsed.WECOM_ARCHIVE_IMPORT_TOKEN
+  wecomArchiveImportToken: parsed.WECOM_ARCHIVE_IMPORT_TOKEN,
+  wecomArchiveInboxDir: path.resolve(parsed.WECOM_ARCHIVE_INBOX_DIR),
+  wecomArchiveProcessedDir: path.resolve(parsed.WECOM_ARCHIVE_PROCESSED_DIR),
+  wecomArchiveFailedDir: path.resolve(parsed.WECOM_ARCHIVE_FAILED_DIR)
 };
