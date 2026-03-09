@@ -4,10 +4,24 @@ import { aiService } from "./ai.js";
 import { repositories } from "../repositories.js";
 import { storageService } from "./storage.js";
 import { wecomService, NormalizedWecomMessage } from "./wecom.js";
-import { ArchiveEntryRecord, AssetRecord, RawMessageRecord, TodoRecord } from "../types.js";
+import { ArchiveEntryRecord, AssetRecord, JsonValue, RawMessageRecord, TodoRecord } from "../types.js";
 import { generateId, nowIso, normalizeWhitespace, truncateText } from "../utils.js";
 
 export type ArchivedEntry = ArchiveEntryRecord & { answerHints: string[] };
+
+export interface CanonicalArchiveInput {
+  msgId: string;
+  sourceAccountId: string;
+  externalUserId: string | null;
+  sourcePayload: JsonValue;
+  msgType: RawMessageRecord["msgType"];
+  sourceType: ArchiveEntryRecord["sourceType"];
+  sendTime: number;
+  baseText: string;
+  warningMessage?: string | null;
+  entryStatus?: ArchiveEntryRecord["status"];
+  asset?: Omit<AssetRecord, "id" | "archiveEntryId" | "rawMessageId" | "createdAt"> | null;
+}
 
 function inferFileName(message: NormalizedWecomMessage, contentDisposition: string | null, contentType: string | null): string {
   const dispositionName = contentDisposition?.match(/filename="?([^"]+)"?/)?.[1];
@@ -112,8 +126,8 @@ export class ArchiveService {
     return archiveRecord;
   }
 
-  async ingestNormalizedMessage(message: NormalizedWecomMessage): Promise<ArchivedEntry | null> {
-    if (repositories.hasRawMessageByMsgId(message.msgId)) {
+  async ingestCanonicalRecord(input: CanonicalArchiveInput): Promise<ArchivedEntry | null> {
+    if (repositories.hasRawMessageByMsgId(input.msgId)) {
       return null;
     }
 
@@ -121,16 +135,37 @@ export class ArchiveService {
     const rawMessageId = generateId("msg");
     const rawRecord: RawMessageRecord = {
       id: rawMessageId,
-      msgId: message.msgId,
-      openKfId: message.openKfId,
-      externalUserId: message.externalUserId,
-      sourcePayload: message.raw as RawMessageRecord["sourcePayload"],
-      msgType: (message.msgType as RawMessageRecord["msgType"]) ?? "unknown",
-      sendTime: message.sendTime,
+      msgId: input.msgId,
+      openKfId: input.sourceAccountId,
+      externalUserId: input.externalUserId,
+      sourcePayload: input.sourcePayload,
+      msgType: input.msgType,
+      sendTime: input.sendTime,
       createdAt
     };
 
-    let assetRecord: AssetRecord | null = null;
+    const assetRecord: AssetRecord | null = input.asset
+      ? {
+          ...input.asset,
+          id: generateId("asset"),
+          archiveEntryId: null,
+          rawMessageId,
+          createdAt
+        }
+      : null;
+
+    return this.persistArchiveFromCanonicalSource({
+      rawRecord,
+      sourceType: input.sourceType,
+      baseText: input.baseText,
+      assetRecord,
+      warningMessage: input.warningMessage ?? null,
+      entryStatus: input.entryStatus ?? (input.warningMessage ? "warning" : "ready")
+    });
+  }
+
+  async ingestNormalizedMessage(message: NormalizedWecomMessage): Promise<ArchivedEntry | null> {
+    let assetRecord: CanonicalArchiveInput["asset"] = null;
     let assetSummaryText = "";
     let warningMessage = likelyOversizeFallback(message);
     let entryStatus: ArchiveEntryRecord["status"] = warningMessage ? "warning" : "ready";
@@ -148,9 +183,6 @@ export class ArchiveService {
         }
 
         assetRecord = {
-          id: generateId("asset"),
-          archiveEntryId: null,
-          rawMessageId,
           kind: message.msgType,
           fileName,
           mimeType: downloaded.contentType ?? saved.mimeType,
@@ -164,7 +196,6 @@ export class ArchiveService {
             parser: parsed.parser,
             warnings: parsed.warnings
           },
-          createdAt
         };
       } catch (error) {
         entryStatus = "warning";
@@ -172,23 +203,29 @@ export class ArchiveService {
       }
     }
 
-    return this.persistArchiveFromCanonicalSource({
-      rawRecord,
+    return this.ingestCanonicalRecord({
+      msgId: message.msgId,
+      sourceAccountId: message.openKfId,
+      externalUserId: message.externalUserId,
+      sourcePayload: message.raw as RawMessageRecord["sourcePayload"],
+      msgType: (message.msgType as RawMessageRecord["msgType"]) ?? "unknown",
+      sendTime: message.sendTime,
       sourceType: (message.msgType as ArchiveEntryRecord["sourceType"]) ?? "unknown",
       baseText: buildCanonicalContent(message.textContent, assetSummaryText),
-      assetRecord,
+      asset: assetRecord,
       warningMessage,
       entryStatus
     });
   }
 
   async ingestManualUpload(input: { fileName: string; buffer: Buffer; note?: string | null }): Promise<ArchivedEntry> {
-    const createdAt = nowIso();
-    const rawMessageId = generateId("msg");
-    const rawRecord: RawMessageRecord = {
-      id: rawMessageId,
+    const saved = await storageService.saveBuffer(input.fileName, input.buffer, "manual-uploads");
+    const parsed = await extractTextFromAsset(saved.storagePath, saved.mimeType);
+    const extractedText = buildAssetSummaryText(saved.fileName, parsed);
+    const warningMessage = parsed.warnings.length ? parsed.warnings.join(" ") : null;
+    const archiveRecord = await this.ingestCanonicalRecord({
       msgId: generateId("upload"),
-      openKfId: "manual-upload",
+      sourceAccountId: "manual-upload",
       externalUserId: null,
       sourcePayload: {
         source: "manual-upload",
@@ -196,41 +233,32 @@ export class ArchiveService {
         note: input.note ?? null
       },
       msgType: "file",
-      sendTime: Math.floor(Date.now() / 1000),
-      createdAt
-    };
-
-    const saved = await storageService.saveBuffer(input.fileName, input.buffer, "manual-uploads");
-    const parsed = await extractTextFromAsset(saved.storagePath, saved.mimeType);
-    const extractedText = buildAssetSummaryText(saved.fileName, parsed);
-    const warningMessage = parsed.warnings.length ? parsed.warnings.join(" ") : null;
-    const assetRecord: AssetRecord = {
-      id: generateId("asset"),
-      archiveEntryId: null,
-      rawMessageId,
-      kind: "manual-upload",
-      fileName: saved.fileName,
-      mimeType: saved.mimeType,
-      sizeBytes: saved.sizeBytes,
-      storagePath: saved.storagePath,
-      extractedText,
-      sha256: saved.sha256,
-      metadata: {
-        parser: parsed.parser,
-        warnings: parsed.warnings,
-        note: input.note ?? null
-      },
-      createdAt
-    };
-
-    return this.persistArchiveFromCanonicalSource({
-      rawRecord,
       sourceType: "file",
+      sendTime: Math.floor(Date.now() / 1000),
       baseText: normalizeWhitespace([input.note ?? "", extractedText].filter(Boolean).join("\n\n")),
-      assetRecord,
+      asset: {
+        kind: "manual-upload",
+        fileName: saved.fileName,
+        mimeType: saved.mimeType,
+        sizeBytes: saved.sizeBytes,
+        storagePath: saved.storagePath,
+        extractedText,
+        sha256: saved.sha256,
+        metadata: {
+          parser: parsed.parser,
+          warnings: parsed.warnings,
+          note: input.note ?? null
+        }
+      },
       warningMessage,
       entryStatus: warningMessage ? "warning" : "ready"
     });
+
+    if (!archiveRecord) {
+      throw new Error("Manual upload created a duplicate message id unexpectedly.");
+    }
+
+    return archiveRecord;
   }
 }
 

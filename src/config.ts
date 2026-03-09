@@ -17,7 +17,8 @@ const schema = z.object({
   WECOM_OPEN_KF_IDS: z.string().default(""),
   WECOM_SYNC_PAGE_SIZE: z.coerce.number().default(100),
   WECOM_CALLBACK_TOKEN: z.string().optional(),
-  WECOM_CALLBACK_AES_KEY: z.string().optional()
+  WECOM_CALLBACK_AES_KEY: z.string().optional(),
+  WECOM_ARCHIVE_IMPORT_TOKEN: z.string().optional()
 });
 
 const parsed = schema.parse(process.env);
@@ -35,5 +36,6 @@ export const appConfig = {
   wecomOpenKfIds: parsed.WECOM_OPEN_KF_IDS.split(",").map((value) => value.trim()).filter(Boolean),
   wecomSyncPageSize: parsed.WECOM_SYNC_PAGE_SIZE,
   wecomCallbackToken: parsed.WECOM_CALLBACK_TOKEN,
-  wecomCallbackAesKey: parsed.WECOM_CALLBACK_AES_KEY
+  wecomCallbackAesKey: parsed.WECOM_CALLBACK_AES_KEY,
+  wecomArchiveImportToken: parsed.WECOM_ARCHIVE_IMPORT_TOKEN
 };

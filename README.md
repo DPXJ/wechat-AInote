@@ -1,6 +1,6 @@
 # WeChat Knowledge Assistant
 
-An internal-first knowledge capture tool built around WeCom Customer Service.
+An internal-first knowledge capture tool that is transitioning from WeCom Customer Service ingestion to a Cubox-style WeCom contact + chat-archive ingestion route.
 
 ## Quick start
 
@@ -9,7 +9,9 @@ An internal-first knowledge capture tool built around WeCom Customer Service.
 3. Start the app with `npm run dev`.
 4. Open `http://localhost:3000`.
 
-## WeCom callback setup
+## Current ingestion routes
+
+### Legacy route: WeCom Customer Service
 
 Configure the WeCom customer service callback URL to:
 
@@ -28,10 +30,76 @@ Behavior:
 - `POST /api/wecom/callback` verifies and decrypts the callback payload, triggers realtime `sync_msg`, archives new messages, and sends an automatic text reply after successful ingestion.
 - If WeCom returns an oversize fallback message, the auto reply redirects the user to `{APP_URL}/upload` for manual upload.
 
+### New primary route: WeCom contact + chat archive
+
+This route is intended to support a Cubox-style workflow where the assistant is added as a contact and users forward material directly to that contact.
+
+Required `.env` values:
+
+- `WECOM_ARCHIVE_IMPORT_TOKEN`
+
+Internal import endpoint:
+
+- `POST {APP_URL}/api/wecom/contact-archive/import`
+
+Headers:
+
+- `Authorization: Bearer {WECOM_ARCHIVE_IMPORT_TOKEN}`
+  or
+- `x-import-token: {WECOM_ARCHIVE_IMPORT_TOKEN}`
+
+Request body:
+
+```json
+{
+  "messages": [
+    {
+      "msgid": "archive-msg-001",
+      "msgtime": 1773036441,
+      "msgtype": "text",
+      "from": "zhangsan",
+      "tolist": ["external-user-001"],
+      "external_userid": "external-user-001",
+      "contact_account_id": "contact:archive-assistant",
+      "text": { "content": "公司的宣传手册发你了" }
+    }
+  ]
+}
+```
+
+Optional inline attachment payload:
+
+```json
+{
+  "msgid": "archive-msg-002",
+  "msgtime": 1773036442,
+  "msgtype": "file",
+  "external_userid": "external-user-001",
+  "attachment": {
+    "fileName": "brand-book.pdf",
+    "mimeType": "application/pdf",
+    "base64": "<base64-file-content>"
+  },
+  "file": {
+    "filename": "brand-book.pdf",
+    "sdkfileid": "sdkfileid-123"
+  }
+}
+```
+
+Behavior:
+
+- Archives decrypted chat-archive messages into the same SQLite knowledge base.
+- Stores inline attachment binaries under local storage when provided.
+- Falls back to metadata-only import when only `sdkfileid` is available, and marks the entry as a warning so a later downloader can fetch the binary.
+
+## WeCom callback setup
+The callback route remains available for the legacy customer-service-based flow.
+
 ## Current scope
 
-- Pulls WeCom Customer Service messages by `open_kfid`
-- Supports WeCom callback URL verification and realtime message sync
+- Supports WeCom Customer Service callback URL verification and realtime message sync
+- Supports internal import of WeCom contact/chat-archive messages
 - Stores data in SQLite and files on local disk
 - Extracts text from `txt`, `md`, `pdf`, `docx`, `xlsx`, `csv`, `pptx`
 - Generates AI title, summary, keywords, tags, and todo candidates

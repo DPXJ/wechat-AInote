@@ -7,6 +7,7 @@ import { repositories } from "./repositories.js";
 import { archiveService } from "./services/archive.js";
 import { runSync } from "./services/sync.js";
 import { searchArchive } from "./services/search.js";
+import { wecomContactArchiveService } from "./services/wecom-contact-archive.js";
 import { renderDashboardHtml, renderUploadHtml } from "./ui.js";
 import {
   decryptWecomPayload,
@@ -31,7 +32,10 @@ function getMultipartFieldValue(field: unknown): string | null {
 }
 
 export function buildServer() {
-  const server = Fastify({ logger: true });
+  const server = Fastify({
+    logger: true,
+    bodyLimit: 1024 * 1024 * 512
+  });
 
   server.addContentTypeParser(["application/xml", "text/xml"], { parseAs: "string" }, (_request, body, done) => {
     done(null, body);
@@ -98,6 +102,36 @@ export function buildServer() {
       return { error: "Configure WECOM_OPEN_KF_IDS in .env before syncing." };
     }
     return runSync({ openKfIds: appConfig.wecomOpenKfIds });
+  });
+
+  server.post("/api/wecom/contact-archive/import", async (request, reply) => {
+    if (!appConfig.wecomArchiveImportToken) {
+      reply.code(400);
+      return { error: "Configure WECOM_ARCHIVE_IMPORT_TOKEN before using the contact-archive import endpoint." };
+    }
+
+    const authHeader = request.headers.authorization;
+    const headerToken =
+      typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length).trim()
+        : typeof request.headers["x-import-token"] === "string"
+          ? request.headers["x-import-token"]
+          : null;
+
+    if (!headerToken || headerToken !== appConfig.wecomArchiveImportToken) {
+      reply.code(401);
+      return { error: "Invalid import token." };
+    }
+
+    const body = request.body as { messages?: unknown };
+    if (!Array.isArray(body.messages)) {
+      reply.code(400);
+      return { error: "Request body must contain a messages array." };
+    }
+
+    return wecomContactArchiveService.importMessages({
+      messages: body.messages as Parameters<typeof wecomContactArchiveService.importMessages>[0]["messages"]
+    });
   });
 
   server.get("/api/wecom/callback", async (request, reply) => {
